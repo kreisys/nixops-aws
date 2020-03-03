@@ -30,7 +30,6 @@ class EC2KeyPairDefinition(nixops.resources.ResourceDefinition):
 
         self.keypair_name = xml.find("attrs/attr[@name='name']/string").get("value")
         self.region = xml.find("attrs/attr[@name='region']/string").get("value")
-        self.profile = xml.find("attrs/attr[@name='profile']/string").get("value")
         self.access_key_id = xml.find("attrs/attr[@name='accessKeyId']/string").get("value")
 
     def show_type(self):
@@ -45,7 +44,6 @@ class EC2KeyPairState(nixops.resources.ResourceState):
     keypair_name = nixops.util.attr_property("ec2.keyPairName", None)
     public_key = nixops.util.attr_property("publicKey", None)
     private_key = nixops.util.attr_property("privateKey", None)
-    profile = nixops.util.attr_property("ec2.profile", None)
     access_key_id = nixops.util.attr_property("ec2.accessKeyId", None)
     region = nixops.util.attr_property("ec2.region", None)
 
@@ -78,7 +76,6 @@ class EC2KeyPairState(nixops.resources.ResourceState):
         if not self._session:
             self._session = nixopsaws.ec2_utils.session(**{
                 "region_name": self.region,
-                "profile_name": self.profile,
                 "aws_access_key_id": self.access_key_id
             })
 
@@ -87,7 +84,6 @@ class EC2KeyPairState(nixops.resources.ResourceState):
     def create(self, defn, check, allow_reboot, allow_recreate):
         # type: (EC2KeyPairDefinition, bool, bool, bool) -> None
 
-        self.profile = defn.profile
         self.access_key_id = defn.access_key_id or nixopsaws.ec2_utils.get_access_key_id()
 
         # Generate the key pair locally.

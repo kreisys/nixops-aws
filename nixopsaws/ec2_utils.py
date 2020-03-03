@@ -70,11 +70,10 @@ def session(**kwargs):
     # type: (**str) -> boto3.Session
 
     kwargs = kwargs.copy()
-    profile = kwargs.pop('profile_name', None)
 
     # cache MFA session between runs so we don't have to enter the code every time
     cli_cache = os.path.join(os.path.expanduser('~'), '.aws/cli/cache')
-    session = botocore.session.Session(profile=profile)
+    session = botocore.session.Session()
     resolver = session.get_component('credential_provider')
     provider = resolver.get_provider('assume-role')
     provider.cache = credentials.JSONFileCache(cli_cache)
@@ -82,7 +81,7 @@ def session(**kwargs):
     return boto3.session.Session(botocore_session=session, **kwargs)
 
 
-def connect(region, profile, access_key_id):
+def connect(region, access_key_id):
     """Connect to the specified EC2 region using the given access key."""
     assert region
     credentials = fetch_aws_secret_key(access_key_id)
@@ -91,21 +90,21 @@ def connect(region, profile, access_key_id):
         conn = boto.ec2.connect_to_region(
             region_name=region, aws_access_key_id=access_key_id, aws_secret_access_key=secret_access_key)
     else:
-        conn = boto.ec2.connect_to_region(region_name=region, profile_name=profile)
+        conn = boto.ec2.connect_to_region(region_name=region)
 
     if not conn:
         raise Exception("invalid EC2 region ‘{0}’".format(region))
 
     return conn
 
-def connect_ec2_boto3(region, profile, access_key_id):
+def connect_ec2_boto3(region, access_key_id):
     assert region
     credentials = fetch_aws_secret_key(access_key_id)
     if credentials:
         (access_key_id, secret_access_key) = credentials
         client = boto3.session.Session().client('ec2', region_name=region, aws_access_key_id=access_key_id, aws_secret_access_key=secret_access_key)
     else:
-        client = boto3.session.Session(region_name=region, profile_name=profile)
+        client = boto3.session.Session(region_name=region)
     return client
 
 def connect_vpc(region, access_key_id):
