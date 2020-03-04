@@ -146,7 +146,6 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
         super(EC2State, self).__init__(depl, name, id)
 
         self._session = None  # type: boto3.session.Session
-        self._conn_route53 = None
         self._cached_instance = None
 
     def _reset_state(self):
@@ -303,15 +302,6 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
             })
 
         return self._session
-
-    def connect_route53(self):
-        if self._conn_route53:
-            return
-
-        # Get the secret access key from the environment or from ~/.ec2-keys.
-        (access_key_id, secret_access_key) = nixopsaws.ec2_utils.fetch_aws_secret_key(self.route53_access_key_id)
-
-        self._conn_route53 = boto.connect_route53(access_key_id, secret_access_key)
 
     def _get_spot_instance_request_by_id(self, request_id, allow_missing=False):
         # type: (str, bool) -> Optional[Dict[str, Any]]
@@ -1363,60 +1353,95 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
 
         self.log('sending Route53 DNS: {0} {1} {2}'.format(self.dns_hostname, record_type, dns_value))
 
-        self.connect_route53()
-
+        # self.connect_route53_boto3()
+        route53 = self.session().client('route53')
         hosted_zone = ".".join(self.dns_hostname.split(".")[1:])
-        zones = self._retry_route53(lambda: self._conn_route53.get_all_hosted_zones())
+        zones = self._retry_route53(lambda: route53.list_hosted_zones())
 
         def testzone(hosted_zone, zone):
             """returns True if there is a subcomponent match"""
             hostparts = hosted_zone.split(".")
-            zoneparts = zone.Name.split(".")[:-1] # strip the last ""
+            zoneparts = zone['Name'].split(".")[:-1] # strip the last ""
 
             return hostparts[::-1][:len(zoneparts)][::-1] == zoneparts
 
-        zones = [zone for zone in zones['ListHostedZonesResponse']['HostedZones'] if testzone(hosted_zone, zone)]
+        zones = [zone for zone in zones['HostedZones'] if testzone(hosted_zone, zone)]
         if len(zones) == 0:
             raise Exception('hosted zone for {0} not found'.format(hosted_zone))
 
         # use hosted zone with longest match
-        zones = sorted(zones, key=lambda x: len(x.Name), reverse=True)
+        zones = sorted(zones, key=lambda x: len(x['Name']), reverse=True)
         zoneid = zones[0]['Id'].split("/")[2]
         dns_name = '{0}.'.format(self.dns_hostname)
 
         prev_a_rrs = [prev for prev
-                      in self._retry_route53(lambda: self._conn_route53.get_all_rrsets(
-                          hosted_zone_id=zoneid,
-                          type="A",
-                          name=dns_name
-                      ))
-                      if prev.name == dns_name
-                      and prev.type == "A"]
+                      in self._retry_route53(lambda: route53.list_resource_record_sets(
+                          HostedZoneId=zoneid,
+                          StartRecordType="A",
+                          StartRecordName=dns_name
+                      ))['ResourceRecordSets']
+                      if prev['Name'] == dns_name
+                      and prev['Type'] == "A"]
 
         prev_cname_rrs = [prev for prev
-                          in self._retry_route53(lambda: self._conn_route53.get_all_rrsets(
-                              hosted_zone_id=zoneid,
-                              type="CNAME",
-                              name=self.dns_hostname
-                          ))
-                          if prev.name == dns_name
-                          and prev.type == "CNAME"]
+                          in self._retry_route53(lambda: route53.list_resource_record_sets(
+                              HostedZoneId=zoneid,
+                              StartRecordType="CNAME",
+                              StartRecordName=self.dns_hostname
+                          ))['ResourceRecordSets']
+                          if prev['Name'] == dns_name
+                          and prev['Type'] == "CNAME"]
 
-        changes = boto.route53.record.ResourceRecordSets(connection=self._conn_route53, hosted_zone_id=zoneid)
+        changes = []
+
         if len(prev_a_rrs) > 0:
             for prevrr in prev_a_rrs:
-                change = changes.add_change("DELETE", self.dns_hostname, "A", ttl=prevrr.ttl)
-                change.add_value(",".join(prevrr.resource_records))
+                change = {
+                    'Action': 'DELETE',
+                    'ResourceRecordSet': {
+                        'Name': self.dns_hostname,
+                        'Type': 'A',
+                        'TTL': prevrr['TTL'],
+                        'ResourceRecords': prevrr['ResourceRecords']
+                    }
+                }
+                changes.append(change)
+
         if len(prev_cname_rrs) > 0:
             for prevrr in prev_cname_rrs:
-                change = changes.add_change("DELETE", prevrr.name, "CNAME", ttl=prevrr.ttl)
-                change.add_value(",".join(prevrr.resource_records))
+                change = {
+                    'Action': 'DELETE',
+                    'ResourceRecordSet': {
+                        'Name': prevrr['Name'],
+                        'Type': 'CNAME',
+                        'TTL': prevrr['TTL'],
+                        'ResourceRecords': prevrr['ResourceRecords']
+                    }
+                }
+                changes.append(change)
 
-        change = changes.add_change("CREATE", self.dns_hostname, record_type, ttl=self.dns_ttl)
-        change.add_value(dns_value)
+        change = {
+            'Action': 'CREATE',
+            'ResourceRecordSet': {
+                'Name': self.dns_hostname,
+                'Type': record_type,
+                'TTL': self.dns_ttl,
+                'ResourceRecords': [{ 'Value': dns_value }]
+            }
+        }
+
+        changes.append(change)
+
+        commit_changes = lambda: route53.change_resource_record_sets(
+            HostedZoneId=zoneid,
+            ChangeBatch={
+                'Changes': changes
+            }
+        )
+
         # add InvalidChangeBatch to error codes to retry on. Unfortunately AWS sometimes returns
         # this due to eventual consistency
-        self._retry_route53(lambda: changes.commit(), error_codes=['InvalidChangeBatch'])
+        self._retry_route53(commit_changes, error_codes=['InvalidChangeBatch'])
 
     def _delete_volume(self, volume_id, allow_keep=False):
         # type: (str, bool) -> None
