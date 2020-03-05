@@ -49,6 +49,7 @@ class EC2Definition(MachineDefinition):
         # type: (Element, Dict[str, Any]) -> None
         super(EC2Definition, self).__init__(xml, config)
 
+        self.profile = config["ec2"]["profile"]
         self.access_key_id = config["ec2"]["accessKeyId"]
         self.region = config["ec2"]["region"]
         self.zone = config["ec2"]["zone"]
@@ -114,6 +115,7 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
     source_dest_check = nixops.util.attr_property("ec2.sourceDestCheck", True, type=bool)
     associate_public_ip_address = nixops.util.attr_property("ec2.associatePublicIpAddress", False, type=bool)
     elastic_ipv4 = nixops.util.attr_property("ec2.elasticIpv4", None)
+    profile = nixops.util.attr_property("ec2.profile", None)
     access_key_id = nixops.util.attr_property("ec2.accessKeyId", None)
     region = nixops.util.attr_property("ec2.region", None)
     zone = nixops.util.attr_property("ec2.zone", None)
@@ -298,6 +300,7 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
         if not self._session:
             self._session = nixopsaws.ec2_utils.session(**{
                 "region_name": self.region,
+                "profile_name": self.profile,
                 "aws_access_key_id": self.access_key_id
             })
 
@@ -308,7 +311,7 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
         """Get spot instance request object by id."""
         ec2 = self.session().client('ec2')
         try:
-            result = ec2.describe_spot_instance_requests(SpotInstanceRequestIds=[request_id])['SpotInstanceRequests']
+            result = ec2.describe_spot_instance_requests(SpotInstanceRequestsIds=[request_id])['SpotInstanceRequests']
         except botocore.exceptions.ClientError as e:
             if allow_missing and e.response['Error']['Code'] == "InvalidSpotInstanceRequestID.NotFound":
                 result = []
@@ -919,6 +922,9 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
             self.region = defn.region
         elif self.region != defn.region:
             self.warn("cannot change region of a running instance (from ‘{}‘ to ‘{}‘)".format(self.region, defn.region))
+
+        if self.profile is None:
+            self.profile = defn.profile
 
         if self.key_pair and self.key_pair != defn.key_pair:
             raise Exception("cannot change key pair of an existing instance (from ‘{}‘ to ‘{}‘)".format(self.key_pair, defn.key_pair))
