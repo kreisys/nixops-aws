@@ -24,14 +24,14 @@ class EC2KeyPairDefinition(nixops.resources.ResourceDefinition):
         # type: () -> str
         return "ec2KeyPairs"
 
-    def __init__(self, xml):
+    def __init__(self, xml, config):
         # type: (...) -> None
-        super(EC2KeyPairDefinition, self).__init__(xml)
+        super(EC2KeyPairDefinition, self).__init__(xml, config)
 
-        self.keypair_name = xml.find("attrs/attr[@name='name']/string").get("value")
-        self.region = xml.find("attrs/attr[@name='region']/string").get("value")
-        self.profile = xml.find("attrs/attr[@name='profile']/string").get("value")
-        self.access_key_id = xml.find("attrs/attr[@name='accessKeyId']/string").get("value")
+        self.keypair_name = config["name"]
+        self.region = config["region"]
+        self.profile = config["profile"]
+        self.access_key_id = config["accessKeyId"]
 
     def show_type(self):
         # type: () -> str

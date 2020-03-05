@@ -18,7 +18,8 @@ with lib;
     };
 
     profile = mkOption {
-      type = types.str;
+      default = null;
+      type = with types; nullOr str;
       description = "Name of the profile.";
     };
 

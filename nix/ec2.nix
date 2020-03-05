@@ -178,7 +178,7 @@ in
     deployment.ec2.profile = mkOption {
       default = null;
       example = "dev-Administrator";
-      type = types.str;
+      type = with types; nullOr str;
       description = ''
         The profile name as defined in <filename>~/.aws/config</filename>
         If left empty it will be left to boto to decide, which means it will
