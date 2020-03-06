@@ -311,7 +311,7 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
         """Get spot instance request object by id."""
         ec2 = self.session().client('ec2')
         try:
-            result = ec2.describe_spot_instance_requests(SpotInstanceRequestsIds=[request_id])['SpotInstanceRequests']
+            result = ec2.describe_spot_instance_requests(SpotInstanceRequestIds=[request_id])['SpotInstanceRequests']
         except botocore.exceptions.ClientError as e:
             if allow_missing and e.response['Error']['Code'] == "InvalidSpotInstanceRequestID.NotFound":
                 result = []
@@ -623,8 +623,8 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
 
         self.log_start("attaching volume ‘{0}’ as ‘{1}’... ".format(volume_id, device_real))
 
-        if self.vm_id != volume.volume.attachments[0]['InstanceId']:
-            # Attach it.
+        # Attach it.
+        if volume.state != "in-use":
             device_that_boto_expects = device_name_to_boto_expected(device_stored)
             volume.attach_to_instance(InstanceId=self.vm_id, Device=device_that_boto_expects)
 
@@ -632,10 +632,10 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
             volume.reload()
             res = volume.state
             self.log_continue("[{0}] ".format(res or "not-attached"))
-            return res == 'attached'
+            return res == 'in-use'
 
         # If volume is not in attached state, wait for it before going on.
-        if volume.state != "attached":
+        if volume.state != 'in-use':
             nixops.util.check_wait(check_attached)
 
         # Wait until the device is visible in the instance.
@@ -842,11 +842,12 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
     def _cancel_spot_request(self):
         if self.spot_instance_request_id is None: return
         self.log_start("cancelling spot instance request ‘{0}’... ".format(self.spot_instance_request_id))
+        ec2 = self.session().client('ec2')
 
         # Cancel the request.
-        request = self._get_spot_instance_request_by_id(self.spot_instance_request_id, allow_missing=True)
-        if request is not None:
-            request.cancel()
+        ec2.cancel_spot_instance_requests(
+            SpotInstanceRequestIds = [ self.spot_instance_request_id ]
+        )
 
         # Wait until it's really cancelled. It's possible that the
         # request got fulfilled while we were cancelling it. In that
@@ -854,12 +855,12 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
         while True:
             request = self._get_spot_instance_request_by_id(self.spot_instance_request_id, allow_missing=True)
             if request is None: break
-            self.log_continue("[{0}] ".format(request.status.code))
-            if request.instance_id is not None and request.instance_id != self.vm_id:
+            self.log_continue("[{0}] ".format(request['Status']['Code']))
+            if request['InstanceId'] is not None and request['InstanceId'] != self.vm_id:
                 if self.vm_id is not None:
                     raise Exception("spot instance request got fulfilled unexpectedly as instance ‘{0}’".format(request.instance_id))
-                self.vm_id = request.instance_id
-            if request.state != 'open': break
+                self.vm_id = request['InstanceId']
+            if request['State']!= 'open': break
             time.sleep(3)
 
         self.log_end("")
@@ -1243,7 +1244,17 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
                     continue
                 self.log("creating EBS volume of {0} GiB...".format(v['size']))
                 ebs_encrypt = v.get('encryptionType', "luks") == "ebs"
-                volume = ec2.create_volume(Size=v['size'], AvailabilityZone=self.zone, VolumeType=v['volumeType'], Iops=v['iops'], Encrypted=ebs_encrypt)
+                kwargs = {
+                    'Size': v['size'],
+                    'AvailabilityZone': self.zone,
+                    'VolumeType': v['volumeType'],
+                    'Encrypted': ebs_encrypt
+                }
+
+                if v['iops']:
+                    kwargs['Iops'] = v['iops'],
+
+                volume = ec2.create_volume(**kwargs)
                 v['volumeId'] = volume['VolumeId']
 
             elif v['disk'].startswith("vol-"):
@@ -1296,7 +1307,7 @@ class EC2State(MachineState, nixopsaws.resources.ec2_common.EC2CommonState):
             # state, to make it recoverable in case an exception
             # happens (e.g. in other machine's deployments).
             if volume:
-                nixopsaws.ec2_utils.wait_for_volume_available(self.session(), volume.id, self.logger)
+                nixopsaws.ec2_utils.wait_for_volume_available(self.session(), volume['VolumeId'], self.logger)
 
         # Always apply tags to the volumes we just created.
         ec2 = self.session().client('ec2')

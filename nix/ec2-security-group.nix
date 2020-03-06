@@ -31,6 +31,12 @@ with import ./lib.nix lib;
       description = "The AWS Access Key ID.";
     };
 
+    profile = mkOption {
+      default = null;
+      type = with types; nullOr str;
+      description = "Name of the profile.";
+    };
+
     groupId = mkOption {
       default = null;
       type = types.uniq (types.nullOr types.str);

@@ -18,8 +18,11 @@ class EC2SecurityGroupDefinition(nixops.resources.ResourceDefinition):
     def get_resource_type(cls):
         return "ec2SecurityGroups"
 
-    def __init__(self, xml):
-        super(EC2SecurityGroupDefinition, self).__init__(xml)
+    def __init__(self, xml, config):
+        super(EC2SecurityGroupDefinition, self).__init__(xml, config)
+
+        self.profile = config["profile"]
+
         self.security_group_name = xml.find("attrs/attr[@name='name']/string").get("value")
         self.security_group_description = xml.find("attrs/attr[@name='description']/string").get("value")
         self.region = xml.find("attrs/attr[@name='region']/string").get("value")
@@ -53,6 +56,7 @@ class EC2SecurityGroupDefinition(nixops.resources.ResourceDefinition):
 class EC2SecurityGroupState(nixops.resources.ResourceState):
     """State of an EC2 security group."""
 
+    profile = nixops.util.attr_property("ec2.profile", None)
     region = nixops.util.attr_property("ec2.region", None)
     security_group_id = nixops.util.attr_property("ec2.securityGroupId", None)
     security_group_name = nixops.util.attr_property("ec2.securityGroupName", None)
@@ -94,7 +98,7 @@ class EC2SecurityGroupState(nixops.resources.ResourceState):
 
     def _connect(self):
         if self._conn: return
-        self._conn = nixopsaws.ec2_utils.connect(self.region, self.access_key_id)
+        self._conn = nixopsaws.ec2_utils.connect(self.region, self.profile, self.access_key_id)
 
     def create(self, defn, check, allow_reboot, allow_recreate):
         def retry_notfound(f):
